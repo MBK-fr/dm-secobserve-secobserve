@@ -9,6 +9,7 @@ import environ
 from django.utils.csp import CSP
 
 from application.__init__ import __version__
+from config.settings.database_options import postgresql_options
 from config.settings.huey_database import create_huey_database
 
 ROOT_DIR = Path(__file__).resolve(strict=True).parent.parent.parent
@@ -90,6 +91,9 @@ else:
             DATABASES["default"]["OPTIONS"]["ssl"] = {"ca": "/app/BaltimoreCyberTrustRoot_combined.crt.pem"}
         if env("MYSQL_AZURE", default="false") == "flexible":
             DATABASES["default"]["OPTIONS"]["ssl"] = {"ca": "/app/combined-ca-certificates.pem"}
+
+    if env("DATABASE_ENGINE") == "django.db.backends.postgresql":
+        DATABASES["default"]["OPTIONS"] = postgresql_options(env)
 
 # https://docs.djangoproject.com/en/stable/ref/settings/#std:setting-DEFAULT_AUTO_FIELD
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -187,6 +191,7 @@ MIDDLEWARE = [
     "django.middleware.common.BrokenLinkEmailsMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "application.commons.services.global_request.GlobalRequestMiddleware",
+    "application.notifications.api.exception_handler.ExceptionNotificationMiddleware",
     "application.commons.services.request_cache.RequestCacheMiddleware",
     "application.commons.services.security_headers.SecurityHeadersMiddleware",
 ]
@@ -463,10 +468,17 @@ HUEY = {
     },
 }
 
+# A task running for longer than this is considered stuck by the command check_background_tasks
+HUEY_TASK_MAX_RUNTIME_HOURS = env.float("HUEY_TASK_MAX_RUNTIME_HOURS", 12)
+if HUEY_TASK_MAX_RUNTIME_HOURS <= 0:
+    raise ValueError("HUEY_TASK_MAX_RUNTIME_HOURS must be greater than 0")
+
 HUEY_STATS = {
     "database": huey_stats_database,
     # The statistics keep the newest max_events rows per queue, and every task writes one row per
     # signal. huey's default of 2000 is filled by a single import that enqueues a task per product,
     # which leaves the background task statistics showing nothing but those enqueues.
     "max_events": env.int("HUEY_STATS_MAX_EVENTS", 100000),
+    # huey's default of 6 hours would prune the in-flight entry of a stuck task before it is reported as stuck
+    "inflight_hours": HUEY_TASK_MAX_RUNTIME_HOURS + 6,
 }
